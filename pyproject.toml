@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conformal-drift"
+version = "0.1.0"
+description = "Adaptive conformal prediction under distribution shift"
+license = {text = "MIT"}
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
