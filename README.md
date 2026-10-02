@@ -1,63 +1,60 @@
-# Conformal Drift
+# conformal-drift
 
-**Adaptive Conformal Inference under Distribution Shift**
+Prediction intervals that keep their promised coverage when the data drifts.
+A from-scratch NumPy implementation of Adaptive Conformal Inference (ACI, Gibbs & Candès 2021), compared with ordinary split conformal prediction on a drifting stream.
 
-This repository provides a from-scratch NumPy implementation of Adaptive Conformal Prediction (ACP). ACP is a method for maintaining valid coverage guarantees on dynamic data streams where the underlying distribution shifts over time. Unlike static conformal prediction, ACP dynamically adjusts the conformal threshold to ensure long-run coverage validity.
+## The idea
 
-## What It Is
+Split conformal prediction takes a calibration set, finds the residual size that 90% of points stay under, and uses it as a fixed interval half-width. That guarantee assumes future data looks like the calibration data. When the data drifts, coverage quietly falls.
 
-Conformal prediction provides statistically rigorous uncertainty quantification for machine learning models. However, standard conformal prediction assumes the training and test data are exchangeable. In real-world settings like finance, healthcare, or autonomous driving, data distributions often shift over time due to concept drift or covariate shift. Adaptive Conformal Prediction addresses this by continuously calibrating the prediction intervals based on recent performance.
+ACI keeps a running miscoverage level α<sub>t</sub> and nudges it after every point:
 
-## The Mathematics
+α<sub>t+1</sub> = α<sub>t</sub> + γ (α − err<sub>t</sub>), where err<sub>t</sub> = 1 if the point fell outside the interval, else 0.
 
-The core idea is to treat coverage calibration as a stochastic control problem. Given a target coverage level $\alpha_{target}$, the algorithm maintains a running estimate of the threshold $\alpha_t$. At each time step $t$, it observes a new data point $(x_t, y_t)$ and computes the nonconformity score $s_t$. The indicator $\mathbb{I}\{y_t \in \hat{C}_t(x_t)\}$ checks if the true label falls within the predicted set.
+A miss lowers α<sub>t</sub>, so the next interval uses a higher quantile of the calibration residuals and is wider; a hit raises it slightly. Over time the miss rate is pulled to α. If α<sub>t</sub> drops to 0 or below, the interval is infinite.
 
-The threshold update rule follows a simple proportional controller:
+## Result
 
-$$ \alpha_t = \alpha_{t-1} + \eta (\alpha_{target} - \mathbb{I}\{y_t \in \hat{C}_t(x_t)\}) $$
+`python benchmark.py` (one seed) and `python results/seeds.py` (5 seeds, `results/seeds.json`).
+Synthetic stream: 5,000 points whose mean rises linearly (slope 0.05 per unit time, plus a slowly growing spread); first 1,500 points calibrate, the next 3,500 are scored. The point prediction is the calibration mean for both methods. Target coverage 90%, ACI step γ = 0.02.
 
-where $\eta$ is a learning rate. If coverage is too low, $\alpha_t$ increases, tightening the prediction set to include more candidates. If coverage is too high, $\alpha_t$ decreases, loosening the set. This feedback loop ensures that the empirical coverage converges to $\alpha_{target}$ despite distribution drift.
+| | Coverage (mean of 5 seeds) | Median interval width | Steps with an infinite interval |
+|---|---|---|---|
+| Split conformal | 74.7% | 3.78 | 0 |
+| **ACI** | **89.9%** | 5.22 | 336 of 3,500 (9.6%) |
 
-## Installation
+ACI hits the 90% target; split conformal falls 15 points short. The price is wider intervals, and on about one step in ten an infinite one: the point prediction never moves while the data drifts away from it, so the only way left to cover the point is to widen the interval.
 
-Install from source:
+## Limits
 
-```bash
-pip install -e .
-```
+- Synthetic data with one simple kind of drift (a linear trend). No real dataset yet.
+- A constant point prediction on purpose, to isolate the interval method. With a model that tracks the trend, the intervals would be far narrower; that comparison is the obvious next step.
+- ACI guarantees long-run average coverage, not coverage in every window.
 
-Requirements:
-- Python 3.8+
-- NumPy
-- Matplotlib (for plotting)
-
-## Usage
-
-Basic example:
+## Use
 
 ```python
-from conformal_drift import AdaptiveConformalPredictor
 import numpy as np
+from conformal_drift import AdaptiveConformalInference
 
-# Initialize
-model = AdaptiveConformalPredictor(alpha_target=0.9, lr=0.001)
-
-# Stream data
-for x, y in data_stream:
-    # Get prediction set
-    pred_set = model.predict(x)
-    # Check if true label is covered
-    is_covered = y in pred_set
-    # Update threshold
-    model.update(is_covered)
+aci = AdaptiveConformalInference(target_coverage=0.9, step_size=0.02)
+aci.fit(np.abs(calib_y - calib_pred))       # calibration residuals
+for pred, y in stream:
+    lo, hi = aci.get_interval(pred)
+    aci.update_alpha(lo <= y <= hi)
 ```
 
-## Benchmark Results
+`SplitConformalInference` has the same `fit` / `get_interval` interface with a fixed α.
 
-Tests on synthetic shifted datasets show the model maintains ~90% coverage under Gaussian drift and linear trend shifts, outperforming static baselines which degrade to ~60% coverage under strong shift. The adaptive approach provides robust uncertainty estimates without requiring explicit drift detection.
+```bash
+pip install -e . && pip install matplotlib pytest
+python benchmark.py          # one seed, writes coverage.png
+python results/seeds.py      # 5 seeds, writes results/seeds.json
+pytest -q tests
+```
 
 ## References
 
-1. Gadot, A., et al. (2022). "Adaptive Conformal Inference Under Distribution Shift." NeurIPS.
-2. Angelopoulos, A. N., & Bates, S. (2021). "Conformal Prediction: A Gentle Introduction." Foundations and Trends® in Machine Learning.
-3. Vovk, V., Gammerman, A., & Shafer, G. (2005). Algorithmic Learning in a Random World. Springer.
+1. Gibbs, I. & Candès, E. (2021). Adaptive Conformal Inference Under Distribution Shift. NeurIPS 2021.
+2. Angelopoulos, A. N. & Bates, S. (2021). A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification. arXiv:2107.07511.
+3. Vovk, V., Gammerman, A. & Shafer, G. (2005). Algorithmic Learning in a Random World. Springer.
